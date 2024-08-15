@@ -44,7 +44,9 @@ impl Accessor {
     pub async fn add_recepient(&self, id: i64) -> Result<()> {
         let mut settings_cache = self.settings_cache.write().await;
 
-        settings_cache.settings.recepients.push(id);
+        if !settings_cache.settings.recepients.contains(&id) {
+            settings_cache.settings.recepients.push(id);
+        }
 
         drop(settings_cache);
 
