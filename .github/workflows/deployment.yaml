@@ -54,7 +54,7 @@ jobs:
           host: ${{ secrets.HOST }}
           key: ${{ secrets.PRIVATE_KEY }}
           username: root
-          envs: TG_TOKEN, BOT_URL, BOT_PORT, CHANNEL_ID, UPTRACE_DSN, CR_PAT
+          envs: TG_TOKEN, BOT_URL, BOT_PORT, CHANNEL_ID, UPTRACE_DSN, CR_PAT, GITHUB_RUN_NUMBER
           script: |
             echo $CR_PAT | docker login ghcr.io -u madetara --password-stdin
             docker stop tforward
