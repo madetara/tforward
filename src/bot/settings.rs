@@ -56,7 +56,7 @@ impl Accessor {
     }
 
     async fn flush(&self) -> Result<()> {
-        let f = File::open(&self.filepath)?;
+        let f = File::create(&self.filepath)?;
         let writer = BufWriter::new(f);
 
         serde_json::to_writer(writer, &self.settings_cache.read().await.settings)?;
