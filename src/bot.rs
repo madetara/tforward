@@ -45,8 +45,23 @@ pub async fn run() -> Result<()> {
     let message_handler = Arc::new(Handler::new(settings_file));
     let command_handler = message_handler.clone();
 
-    let handler: UpdateHandler<anyhow::Error> = Update::filter_message()
+    let handler: UpdateHandler<anyhow::Error> = dptree::entry()
         .branch(
+            Update::filter_message().branch(
+                dptree::entry()
+                    .filter_command::<Command>()
+                    .filter(|cfg: Config, msg: Message| msg.chat.id != cfg.source_channel)
+                    .endpoint(move |_: Config, msg: Message, bot: Bot, cmd: Command| {
+                        let command_handler = command_handler.clone();
+
+                        async move {
+                            command_handler.handle_command(&bot, &msg, &cmd).await?;
+                            Ok(())
+                        }
+                    }),
+            ),
+        )
+        .branch(Update::filter_channel_post().branch(
             dptree::filter(|cfg: Config, msg: Message| msg.chat.id == cfg.source_channel).endpoint(
                 move |msg: Message, bot: Bot| {
                     let message_handler = message_handler.clone();
@@ -57,20 +72,7 @@ pub async fn run() -> Result<()> {
                     }
                 },
             ),
-        )
-        .branch(
-            dptree::entry()
-                .filter_command::<Command>()
-                .filter(|cfg: Config, msg: Message| msg.chat.id != cfg.source_channel)
-                .endpoint(move |_: Config, msg: Message, bot: Bot, cmd: Command| {
-                    let command_handler = command_handler.clone();
-
-                    async move {
-                        command_handler.handle_command(&bot, &msg, &cmd).await?;
-                        Ok(())
-                    }
-                }),
-        );
+        ));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![config])
