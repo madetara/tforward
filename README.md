@@ -15,3 +15,7 @@ Telegram bot that forwards messages from a chosen channel to an unlimited\* amou
 - `BOT_PORT` - port to listen for webhooks on
 - `CHANNEL_ID` - id of a channel to forward messages from
 - `UPTRACE_DSN` - telemetry, refer to [uptrace website](https://uptrace.dev/) for more info
+
+## Additional setup
+
+List of recepients is stored in a json file at `/data/tforward_settings.json`
