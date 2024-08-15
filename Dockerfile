@@ -13,7 +13,7 @@ RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path r
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin tforward
 
-FROM alpine:3.18 as runtime
+FROM alpine:3.20 as runtime
 WORKDIR /app
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/tforward tforward
 ENV RUST_LOG="info"
