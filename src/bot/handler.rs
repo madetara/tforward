@@ -1,5 +1,10 @@
 use anyhow::Result;
-use teloxide::{macros::BotCommands, prelude::*, types::Message, Bot};
+use teloxide::{
+    macros::BotCommands,
+    prelude::*,
+    types::{Message, ReplyParameters},
+    Bot,
+};
 use tokio::task::JoinSet;
 use tracing::instrument;
 
@@ -64,7 +69,7 @@ impl Handler {
             Command::Subscribe => {
                 self.settings_accessor.add_recepient(msg.chat.id.0).await?;
                 bot.send_message(msg.chat.id, "Subscribed!")
-                    .reply_to_message_id(msg.id)
+                    .reply_parameters(ReplyParameters::new(msg.id))
                     .await?;
             }
         }

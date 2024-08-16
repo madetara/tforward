@@ -74,21 +74,23 @@ pub async fn run() -> Result<()> {
             ),
         ));
 
-    Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![config])
-        .default_handler(|upd| async move {
-            tracing::warn!("Unhandled update: {:?}", upd);
-        })
-        .error_handler(LoggingErrorHandler::with_custom_text(
-            "An error has occurred in the dispatcher",
-        ))
-        .enable_ctrlc_handler()
-        .build()
-        .dispatch_with_listener(
-            listener,
-            LoggingErrorHandler::with_custom_text("Listener failed"),
-        )
-        .await;
+    Box::pin(
+        Dispatcher::builder(bot, handler)
+            .dependencies(dptree::deps![config])
+            .default_handler(|upd| async move {
+                tracing::warn!("Unhandled update: {:?}", upd);
+            })
+            .error_handler(LoggingErrorHandler::with_custom_text(
+                "An error has occurred in the dispatcher",
+            ))
+            .enable_ctrlc_handler()
+            .build()
+            .dispatch_with_listener(
+                listener,
+                LoggingErrorHandler::with_custom_text("Listener failed"),
+            ),
+    )
+    .await;
 
     Ok(())
 }
