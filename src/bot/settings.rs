@@ -7,6 +7,7 @@ use std::{
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::{fs, sync::RwLock};
+use tracing::instrument;
 
 pub struct Accessor {
     filepath: String,
@@ -33,6 +34,7 @@ impl Accessor {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_settings(&self) -> Result<Settings> {
         self.load().await?;
 
@@ -41,6 +43,7 @@ impl Accessor {
         Ok(settings_cache.settings.clone())
     }
 
+    #[instrument(skip(self))]
     pub async fn add_recepient(&self, id: i64) -> Result<()> {
         let mut settings_cache = self.settings_cache.write().await;
 
@@ -55,6 +58,7 @@ impl Accessor {
         Ok(())
     }
 
+    #[instrument(name = "flush_settings", skip(self))]
     async fn flush(&self) -> Result<()> {
         let f = File::create(&self.filepath)?;
         let writer = BufWriter::new(f);
@@ -64,10 +68,12 @@ impl Accessor {
         Ok(())
     }
 
+    #[instrument(name = "load_settings", skip(self))]
     async fn load(&self) -> Result<()> {
         let settings_cache = self.settings_cache.read().await;
 
         if settings_cache.loaded {
+            tracing::info!("load not needed");
             return Ok(());
         }
 
@@ -76,15 +82,17 @@ impl Accessor {
         let mut settings_cache = self.settings_cache.write().await;
 
         if settings_cache.loaded {
+            tracing::info!("load not needed");
             return Ok(());
         }
 
         if fs::try_exists(&self.filepath).await? {
+            tracing::info!("loading from file: {}", self.filepath);
             let f = File::open(&self.filepath)?;
             let reader = BufReader::new(f);
-
             settings_cache.settings = serde_json::from_reader(reader)?;
         } else {
+            tracing::info!("initializing new instance");
             settings_cache.settings = Settings::new();
         }
 
