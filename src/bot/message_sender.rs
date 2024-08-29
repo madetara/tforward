@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tracing::{instrument, Level};
 
 use teloxide::{
     prelude::Requester,
@@ -21,10 +22,10 @@ use tokio::{
 
 use super::settings::Accessor;
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct MediaGroupId(pub String);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct MediaGroupInfo {
     from: ChatId,
     message_ids: Vec<MessageId>,
@@ -47,6 +48,7 @@ pub struct MessageInfoReciever(pub UnboundedReceiver<MessageInfo>);
 
 pub struct MessageInfoSender(pub UnboundedSender<MessageInfo>);
 
+#[derive(Debug)]
 pub struct MessageInfo {
     from: ChatId,
     id: MessageId,
@@ -78,6 +80,8 @@ impl MessageSender {
         while !self.reciever.0.is_closed() {
             match self.reciever.0.try_recv() {
                 Ok(message_info) => {
+                    tracing::info!("adding message to plan: {:?}", message_info);
+
                     let mut send_plan_lock = self.send_plan.lock().await;
                     let entry = send_plan_lock
                         .entry(message_info.media_group_id)
@@ -93,9 +97,12 @@ impl MessageSender {
                     drop(send_plan_lock);
                 }
                 Err(TryRecvError::Empty) => {
+                    tracing::debug!("no new messages. trying to send");
+
                     if let Err(error) = self.try_send_messages().await {
                         tracing::warn!("error occured while sending messages, details: {}", error);
                     }
+                    tracing::debug!("sleeping");
                     sleep(PAUSE_DURATION).await;
                 }
                 Err(TryRecvError::Disconnected) => break,
@@ -103,19 +110,25 @@ impl MessageSender {
         }
     }
 
+    #[instrument(skip(self))]
     async fn try_send_messages(&self) -> Result<()> {
+        tracing::info!("attempting to send messages");
+
         let current_time = seconds_since_unix_epoch();
         let mut to_remove = vec![];
         let send_plan = Arc::clone(&self.send_plan);
         let send_plan_lock = send_plan.lock().await;
 
         for (media_group_id, media_group_info) in send_plan_lock.iter() {
+            tracing::info!("processing media group: {:?}", media_group_info);
+
             let media_group_info = Arc::clone(media_group_info);
             let media_group_info_lock = media_group_info.lock().await;
 
             if current_time - media_group_info_lock.last_message_timestamp
                 < MESSAGE_SEND_DELAY_SECONDS
             {
+                tracing::info!("not enough time has passed. skipping");
                 continue;
             }
 
@@ -131,6 +144,8 @@ impl MessageSender {
                 let media_group_info = Arc::clone(&media_group_info);
 
                 join_set.spawn(async move {
+                    let span = tracing::span!(Level::INFO, "forwarding message", recepient = id.0);
+                    let _enter = span.enter();
                     let media_group_info = media_group_info.lock().await;
 
                     bot.forward_messages(
