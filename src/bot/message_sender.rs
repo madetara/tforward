@@ -148,13 +148,12 @@ impl MessageSender {
                     let _enter = span.enter();
                     let media_group_info = media_group_info.lock().await;
 
-                    bot.forward_messages(
-                        id,
-                        media_group_info.from,
-                        media_group_info.message_ids.clone(),
-                    )
-                    .await
-                    .and(Ok(id))
+                    let mut message_ids = media_group_info.message_ids.clone();
+                    message_ids.sort_by(|&a, &b| a.0.cmp(&b.0));
+
+                    bot.forward_messages(id, media_group_info.from, message_ids)
+                        .await
+                        .and(Ok(id))
                 });
             }
 
