@@ -1,9 +1,13 @@
 use anyhow::Result;
 use handler::{Command, Handler};
+use message_sender::{MessageInfoReciever, MessageInfoSender, MessageSender};
+use settings::Accessor;
 use std::{env, sync::Arc};
 use teloxide::{dispatching::UpdateHandler, prelude::*, update_listeners::webhooks};
+use tokio::sync::mpsc::unbounded_channel;
 
 mod handler;
+mod message_sender;
 mod settings;
 
 #[derive(Clone)]
@@ -40,10 +44,22 @@ pub async fn run() -> Result<()> {
         source_channel: ChatId(channel_id),
     };
 
+    let (sender, reciever) = unbounded_channel();
     let settings_file = "/data/tforward_settings.json";
+    let settings_accessor = Arc::new(Accessor::new(settings_file));
 
-    let message_handler = Arc::new(Handler::new(settings_file));
-    let command_handler = message_handler.clone();
+    let message_handler = Arc::new(Handler::new(
+        Arc::clone(&settings_accessor),
+        MessageInfoSender(sender),
+    ));
+
+    let message_sender = MessageSender::new(
+        MessageInfoReciever(reciever),
+        Arc::clone(&settings_accessor),
+        bot.clone(),
+    );
+
+    let command_handler = Arc::clone(&message_handler);
 
     let handler: UpdateHandler<anyhow::Error> = dptree::entry()
         .branch(
@@ -74,23 +90,29 @@ pub async fn run() -> Result<()> {
             ),
         ));
 
-    Box::pin(
-        Dispatcher::builder(bot, handler)
-            .dependencies(dptree::deps![config])
-            .default_handler(|upd| async move {
-                tracing::warn!("Unhandled update: {:?}", upd);
-            })
-            .error_handler(LoggingErrorHandler::with_custom_text(
-                "An error has occurred in the dispatcher",
-            ))
-            .enable_ctrlc_handler()
-            .build()
-            .dispatch_with_listener(
+    let mut dispatcher = Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![config])
+        .default_handler(|upd| async move {
+            tracing::warn!("Unhandled update: {:?}", upd);
+        })
+        .error_handler(LoggingErrorHandler::with_custom_text(
+            "An error has occurred in the dispatcher",
+        ))
+        .enable_ctrlc_handler()
+        .build();
+
+    let _ = tokio::join!(
+        tokio::spawn(async move {
+            Box::pin(dispatcher.dispatch_with_listener(
                 listener,
                 LoggingErrorHandler::with_custom_text("Listener failed"),
-            ),
-    )
-    .await;
+            ))
+            .await;
+        }),
+        tokio::spawn(async move {
+            message_sender.run().await;
+        })
+    );
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use teloxide::{
     macros::BotCommands,
@@ -8,7 +10,10 @@ use teloxide::{
 use tokio::task::JoinSet;
 use tracing::instrument;
 
-use super::settings::Accessor;
+use super::{
+    message_sender::{MediaGroupId, MessageInfo, MessageInfoSender},
+    settings::Accessor,
+};
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(
@@ -21,41 +26,60 @@ pub enum Command {
 }
 
 pub struct Handler {
-    settings_accessor: Accessor,
+    settings_accessor: Arc<Accessor>,
+    message_info_sender: MessageInfoSender,
 }
 
 impl Handler {
-    pub fn new(settings_file: &str) -> Self {
-        let settings_accessor = Accessor::new(settings_file);
-        Self { settings_accessor }
+    pub fn new(settings_accessor: Arc<Accessor>, message_info_sender: MessageInfoSender) -> Self {
+        Self {
+            settings_accessor,
+            message_info_sender,
+        }
     }
 
     #[instrument(skip(self, bot, msg), fields(channel_id = %msg.chat.id))]
     pub async fn handle_message(&self, bot: &Bot, msg: &Message) -> Result<()> {
-        let recepients = self.settings_accessor.get_settings().await?.recepients;
+        if let Some(media_group_id) = msg.media_group_id() {
+            tracing::info!(
+                "scheduling media group for sending: {media_group_id}",
+                media_group_id = media_group_id
+            );
 
-        let mut join_set = JoinSet::new();
+            let message_info = MessageInfo::new(
+                msg.chat.id,
+                msg.id,
+                MediaGroupId(String::from(media_group_id)),
+            );
+            self.message_info_sender.0.send(message_info)?;
+        } else {
+            tracing::info!("forwarding normal message");
 
-        for id in recepients.into_iter().map(ChatId) {
-            tracing::info!("forwarding message to {recepient_id}", recepient_id = id);
-            let bot = bot.clone();
-            let msg = msg.clone();
-            join_set.spawn(async move { bot.forward_message(id, msg.chat.id, msg.id).await });
-        }
+            let recepients = self.settings_accessor.get_settings().await?.recepients;
 
-        while let Some(Ok(send_result)) = join_set.join_next().await {
-            match send_result {
-                Ok(msg) => {
-                    tracing::info!(
-                        "forwarded message to {recepient_id}",
-                        recepient_id = msg.chat.id
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        "error while forwarding message. error: {error}",
-                        error = err
-                    );
+            let mut join_set = JoinSet::new();
+
+            for id in recepients.into_iter().map(ChatId) {
+                tracing::info!("forwarding message to {recepient_id}", recepient_id = id);
+                let bot = bot.clone();
+                let msg = msg.clone();
+                join_set.spawn(async move { bot.forward_message(id, msg.chat.id, msg.id).await });
+            }
+
+            while let Some(Ok(send_result)) = join_set.join_next().await {
+                match send_result {
+                    Ok(msg) => {
+                        tracing::info!(
+                            "forwarded message to {recepient_id}",
+                            recepient_id = msg.chat.id
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "error while forwarding message. error: {error}",
+                            error = err
+                        );
+                    }
                 }
             }
         }
