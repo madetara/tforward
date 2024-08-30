@@ -58,6 +58,27 @@ impl Accessor {
         Ok(())
     }
 
+    #[instrument(skip(self))]
+    pub async fn remove_recepient(&self, id: i64) -> Result<()> {
+        let mut settings_cache = self.settings_cache.write().await;
+
+        let new_recepients = settings_cache
+            .settings
+            .recepients
+            .clone()
+            .into_iter()
+            .filter(|&x| x != id)
+            .collect();
+
+        settings_cache.settings.recepients = new_recepients;
+
+        drop(settings_cache);
+
+        self.flush().await?;
+
+        Ok(())
+    }
+
     #[instrument(name = "flush_settings", skip(self))]
     async fn flush(&self) -> Result<()> {
         let f = File::create(&self.filepath)?;

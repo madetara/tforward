@@ -23,6 +23,8 @@ use super::{
 pub enum Command {
     #[command(description = "subscribe to new messages")]
     Subscribe,
+    #[command(description = "unsubscribe from message forwarding")]
+    Unsubscribe,
 }
 
 pub struct Handler {
@@ -93,6 +95,14 @@ impl Handler {
             Command::Subscribe => {
                 self.settings_accessor.add_recepient(msg.chat.id.0).await?;
                 bot.send_message(msg.chat.id, "Subscribed!")
+                    .reply_parameters(ReplyParameters::new(msg.id))
+                    .await?;
+            }
+            Command::Unsubscribe => {
+                self.settings_accessor
+                    .remove_recepient(msg.chat.id.0)
+                    .await?;
+                bot.send_message(msg.chat.id, "Unsubscribed!")
                     .reply_parameters(ReplyParameters::new(msg.id))
                     .await?;
             }
