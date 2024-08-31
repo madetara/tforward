@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use teloxide::types::{ChatId, ThreadId};
 use tokio::{fs, sync::RwLock};
 use tracing::instrument;
 
@@ -14,9 +15,15 @@ pub struct Accessor {
     settings_cache: RwLock<SettingsCache>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Settings {
-    pub recepients: Vec<i64>,
+    pub recepients: Vec<Recepient>,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct Recepient {
+    pub chat_id: ChatId,
+    pub thread_id: Option<ThreadId>,
 }
 
 struct SettingsCache {
@@ -44,11 +51,11 @@ impl Accessor {
     }
 
     #[instrument(skip(self))]
-    pub async fn add_recepient(&self, id: i64) -> Result<()> {
+    pub async fn add_recepient(&self, recepient: Recepient) -> Result<()> {
         let mut settings_cache = self.settings_cache.write().await;
 
-        if !settings_cache.settings.recepients.contains(&id) {
-            settings_cache.settings.recepients.push(id);
+        if !settings_cache.settings.recepients.contains(&recepient) {
+            settings_cache.settings.recepients.push(recepient);
         }
 
         drop(settings_cache);
@@ -59,7 +66,7 @@ impl Accessor {
     }
 
     #[instrument(skip(self))]
-    pub async fn remove_recepient(&self, id: i64) -> Result<()> {
+    pub async fn remove_recepient(&self, recepient: Recepient) -> Result<()> {
         let mut settings_cache = self.settings_cache.write().await;
 
         let new_recepients = settings_cache
@@ -67,7 +74,7 @@ impl Accessor {
             .recepients
             .clone()
             .into_iter()
-            .filter(|&x| x != id)
+            .filter(|x| *x != recepient)
             .collect();
 
         settings_cache.settings.recepients = new_recepients;

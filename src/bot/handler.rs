@@ -12,7 +12,7 @@ use tracing::instrument;
 
 use super::{
     message_sender::{MediaGroupId, MessageInfo, MessageInfoSender},
-    settings::Accessor,
+    settings::{Accessor, Recepient},
 };
 
 #[derive(BotCommands, Clone, Debug)]
@@ -61,11 +61,23 @@ impl Handler {
 
             let mut join_set = JoinSet::new();
 
-            for id in recepients.into_iter().map(ChatId) {
-                tracing::info!("forwarding message to {recepient_id}", recepient_id = id);
+            for recepient in recepients {
+                tracing::info!(
+                    "forwarding message to {recepient_id}",
+                    recepient_id = recepient.chat_id
+                );
                 let bot = bot.clone();
                 let msg = msg.clone();
-                join_set.spawn(async move { bot.forward_message(id, msg.chat.id, msg.id).await });
+                join_set.spawn(async move {
+                    let mut message_forward =
+                        bot.forward_message(recepient.chat_id, msg.chat.id, msg.id);
+
+                    if let Some(thread_id) = recepient.thread_id {
+                        message_forward = message_forward.message_thread_id(thread_id);
+                    }
+
+                    message_forward.await
+                });
             }
 
             while let Some(Ok(send_result)) = join_set.join_next().await {
@@ -93,15 +105,21 @@ impl Handler {
     pub async fn handle_command(&self, bot: &Bot, msg: &Message, cmd: &Command) -> Result<()> {
         match cmd {
             Command::Subscribe => {
-                self.settings_accessor.add_recepient(msg.chat.id.0).await?;
+                let recepient = Recepient {
+                    chat_id: msg.chat.id,
+                    thread_id: msg.thread_id,
+                };
+                self.settings_accessor.add_recepient(recepient).await?;
                 bot.send_message(msg.chat.id, "Subscribed!")
                     .reply_parameters(ReplyParameters::new(msg.id))
                     .await?;
             }
             Command::Unsubscribe => {
-                self.settings_accessor
-                    .remove_recepient(msg.chat.id.0)
-                    .await?;
+                let recepient = Recepient {
+                    chat_id: msg.chat.id,
+                    thread_id: msg.thread_id,
+                };
+                self.settings_accessor.remove_recepient(recepient).await?;
                 bot.send_message(msg.chat.id, "Unsubscribed!")
                     .reply_parameters(ReplyParameters::new(msg.id))
                     .await?;

@@ -33,7 +33,7 @@ jobs:
         with:
           builder: ${{ steps.buildx.outputs.name }}
           push: true
-          tags: ghcr.io/madetara/tforward/bot:0.1.${{ github.run_number }}
+          tags: ghcr.io/madetara/tforward/bot:0.2.${{ github.run_number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -66,4 +66,4 @@ jobs:
               --env CHANNEL_ID="$CHANNEL_ID" \
               --env UPTRACE_DSN="$UPTRACE_DSN" \
               -v "/root/workload/tforward:/data" \
-              "ghcr.io/madetara/tforward/bot:0.1.$GITHUB_RUN_NUMBER"
+              "ghcr.io/madetara/tforward/bot:0.2.$GITHUB_RUN_NUMBER"

@@ -7,6 +7,7 @@ use std::{
 use tracing::{instrument, Level};
 
 use teloxide::{
+    payloads::ForwardMessagesSetters,
     prelude::Requester,
     types::{ChatId, MessageId},
     Bot,
@@ -138,22 +139,36 @@ impl MessageSender {
 
             let mut join_set = JoinSet::new();
 
-            for id in recepients.into_iter().map(ChatId) {
-                tracing::info!("forwarding message to {recepient_id}", recepient_id = id);
+            for recepient in recepients {
+                tracing::info!(
+                    "forwarding message to {recepient_id}",
+                    recepient_id = recepient.chat_id
+                );
                 let bot = self.bot.clone();
                 let media_group_info = Arc::clone(&media_group_info);
 
                 join_set.spawn(async move {
-                    let span = tracing::span!(Level::INFO, "forwarding message", recepient = id.0);
+                    let span = tracing::span!(
+                        Level::INFO,
+                        "forwarding message",
+                        recepient = recepient.chat_id.0
+                    );
                     let _enter = span.enter();
                     let media_group_info = media_group_info.lock().await;
 
                     let mut message_ids = media_group_info.message_ids.clone();
                     message_ids.sort_by(|&a, &b| a.0.cmp(&b.0));
 
-                    bot.forward_messages(id, media_group_info.from, message_ids)
-                        .await
-                        .and(Ok(id))
+                    let mut message_forward =
+                        bot.forward_messages(recepient.chat_id, media_group_info.from, message_ids);
+
+                    if let Some(thread_id) = recepient.thread_id {
+                        message_forward = message_forward.message_thread_id(thread_id);
+                    }
+
+                    drop(media_group_info);
+
+                    message_forward.await.and(Ok(recepient.chat_id))
                 });
             }
 
