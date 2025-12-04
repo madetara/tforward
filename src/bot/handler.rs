@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use teloxide::{
+    Bot,
     macros::BotCommands,
     prelude::*,
     types::{Message, ReplyParameters},
-    Bot,
 };
 use tokio::task::JoinSet;
 use tracing::instrument;
@@ -33,7 +33,10 @@ pub struct Handler {
 }
 
 impl Handler {
-    pub fn new(settings_accessor: Arc<Accessor>, message_info_sender: MessageInfoSender) -> Self {
+    pub const fn new(
+        settings_accessor: Arc<Accessor>,
+        message_info_sender: MessageInfoSender,
+    ) -> Self {
         Self {
             settings_accessor,
             message_info_sender,
@@ -51,7 +54,7 @@ impl Handler {
             let message_info = MessageInfo::new(
                 msg.chat.id,
                 msg.id,
-                MediaGroupId(String::from(media_group_id)),
+                MediaGroupId(media_group_id.to_string()),
             );
             self.message_info_sender.0.send(message_info)?;
         } else {

@@ -3,7 +3,9 @@ mod telemetry;
 
 #[tokio::main]
 async fn main() {
-    openssl_probe::init_ssl_cert_env_vars();
+    unsafe {
+        openssl_probe::init_openssl_env_vars();
+    }
 
     telemetry::setup();
 
