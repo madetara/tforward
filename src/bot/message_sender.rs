@@ -14,11 +14,11 @@ use teloxide::{
 };
 use tokio::{
     sync::{
-        mpsc::{error::TryRecvError, UnboundedReceiver, UnboundedSender},
+        mpsc::{UnboundedReceiver, UnboundedSender},
         Mutex,
     },
     task::JoinSet,
-    time::sleep,
+    time::interval,
 };
 
 use super::settings::Accessor;
@@ -78,9 +78,18 @@ impl MessageSender {
     }
 
     pub async fn run(mut self) {
-        while !self.reciever.0.is_closed() {
-            match self.reciever.0.try_recv() {
-                Ok(message_info) => {
+        let mut ticker = interval(PAUSE_DURATION);
+
+        loop {
+            tokio::select! {
+                maybe_message = self.reciever.0.recv() => {
+                    let Some(message_info) = maybe_message else {
+                        if let Err(error) = self.try_send_messages().await {
+                            tracing::warn!("error occured while sending messages, details: {}", error);
+                        }
+                        break;
+                    };
+
                     tracing::info!("adding message to plan: {:?}", message_info);
 
                     let mut send_plan_lock = self.send_plan.lock().await;
@@ -97,16 +106,12 @@ impl MessageSender {
                     drop(entry_lock);
                     drop(send_plan_lock);
                 }
-                Err(TryRecvError::Empty) => {
-                    tracing::debug!("no new messages. trying to send");
-
+                _ = ticker.tick() => {
+                    tracing::debug!("tick: trying to send");
                     if let Err(error) = self.try_send_messages().await {
                         tracing::warn!("error occured while sending messages, details: {}", error);
                     }
-                    tracing::debug!("sleeping");
-                    sleep(PAUSE_DURATION).await;
                 }
-                Err(TryRecvError::Disconnected) => break,
             }
         }
     }
@@ -116,36 +121,62 @@ impl MessageSender {
         tracing::info!("attempting to send messages");
 
         let current_time = seconds_since_unix_epoch();
-        let mut to_remove = vec![];
-        let send_plan = Arc::clone(&self.send_plan);
-        let send_plan_lock = send_plan.lock().await;
+        let candidates = {
+            let send_plan_lock = self.send_plan.lock().await;
+            send_plan_lock
+                .iter()
+                .map(|(media_group_id, media_group_info)| {
+                    (media_group_id.clone(), Arc::clone(media_group_info))
+                })
+                .collect::<Vec<_>>()
+        };
 
-        for (media_group_id, media_group_info) in send_plan_lock.iter() {
-            tracing::info!("processing media group: {:?}", media_group_info);
-
-            let media_group_info = Arc::clone(media_group_info);
+        let mut ready_groups = Vec::new();
+        for (media_group_id, media_group_info) in candidates {
             let media_group_info_lock = media_group_info.lock().await;
-
-            if current_time - media_group_info_lock.last_message_timestamp
+            if current_time
+                .saturating_sub(media_group_info_lock.last_message_timestamp)
                 < MESSAGE_SEND_DELAY_SECONDS
             {
                 tracing::info!("not enough time has passed. skipping");
                 continue;
             }
 
+            tracing::info!("processing media group: {:?}", media_group_info);
             drop(media_group_info_lock);
+            ready_groups.push((media_group_id, media_group_info));
+        }
 
-            let recepients = self.settings.get_settings().await?.recepients;
+        if ready_groups.is_empty() {
+            return Ok(());
+        }
 
+        {
+            let mut send_plan_lock = self.send_plan.lock().await;
+            for (media_group_id, _) in &ready_groups {
+                send_plan_lock.remove(media_group_id);
+            }
+        }
+
+        let recepients = self.settings.get_settings().await?.recepients;
+
+        for (_, media_group_info) in ready_groups {
             let mut join_set = JoinSet::new();
+            let (from, message_ids) = {
+                let media_group_info = media_group_info.lock().await;
+                let mut message_ids = media_group_info.message_ids.clone();
+                message_ids.sort_by(|&a, &b| a.0.cmp(&b.0));
+                (media_group_info.from, message_ids)
+            };
 
-            for recepient in recepients {
+            for recepient in &recepients {
                 tracing::info!(
                     "forwarding message to {recepient_id}",
                     recepient_id = recepient.chat_id
                 );
                 let bot = self.bot.clone();
-                let media_group_info = Arc::clone(&media_group_info);
+                let message_ids = message_ids.clone();
+                let recepient = recepient.clone();
 
                 join_set.spawn(async move {
                     let span = tracing::span!(
@@ -154,19 +185,13 @@ impl MessageSender {
                         recepient = recepient.chat_id.0
                     );
                     let _enter = span.enter();
-                    let media_group_info = media_group_info.lock().await;
-
-                    let mut message_ids = media_group_info.message_ids.clone();
-                    message_ids.sort_by(|&a, &b| a.0.cmp(&b.0));
 
                     let mut message_forward =
-                        bot.forward_messages(recepient.chat_id, media_group_info.from, message_ids);
+                        bot.forward_messages(recepient.chat_id, from, message_ids);
 
                     if let Some(thread_id) = recepient.thread_id {
                         message_forward = message_forward.message_thread_id(thread_id);
                     }
-
-                    drop(media_group_info);
 
                     message_forward.await.and(Ok(recepient.chat_id))
                 });
@@ -188,16 +213,6 @@ impl MessageSender {
                     }
                 }
             }
-
-            to_remove.push(media_group_id.clone());
-        }
-
-        drop(send_plan_lock);
-
-        let send_plan = Arc::clone(&self.send_plan);
-        for media_group_id in to_remove {
-            let mut send_plan_lock = send_plan.lock().await;
-            send_plan_lock.remove(&media_group_id);
         }
 
         Ok(())
